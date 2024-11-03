@@ -105,4 +105,8 @@ if you want to see all the options, execute **guessc** without any argument, you
 output:
 D2029F64D445BD131FFAA399A42D2F8E7DC:2119106
 ```
-Enjoy!
+
+## Where I can find the last list of passwords discovered?
+You can find the list at the [Releases](https://github.com/redsnk/guessc/releases) section.
+
+**Enjoy!**
