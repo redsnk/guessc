@@ -11,7 +11,7 @@ As [haveibeenpwned](https://haveibeenpwned.com/Passwords) explains,
 
 >"Pwned Passwords" are hundreds of millions of real world passwords previously exposed in data breaches.
 
-This list doesn't come with the passwords in clear text, it comes as a list of SHA1 or MD5 hashes as a precaution that no one can discover others passwords.
+This list doesn't come with the passwords in clear text, it comes as a list of [SHA1](https://en.wikipedia.org/wiki/SHA-1) or [MD5](https://en.wikipedia.org/wiki/MD5) hashes as a precaution that no one can discover others passwords.
 
 _Sample of head **00000** (the last number shows the number of users sharing the same password)_:
 ```
