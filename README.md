@@ -3,7 +3,7 @@ A tool to recover part of the [Pwnd Passwords list](https://haveibeenpwned.com/P
 ## What is Guessc?
 Guessc is a tool to recover part of the [Pwnd Passwords list](https://haveibeenpwned.com/Passwords) without using dictionaries or brute force and taking advantage of something I called **information overflow vulnerability**.
 ## So, how many passwords are we talking about?
-In numbers, the last execution revealed 154 millions of passwords from a list of 936 milions of hashes. It lasted one day and a half using an Intel core i3 with 16G of memory.
+In numbers, the last execution revealed 154 millions of passwords from a list of 936 millions of hashes. It lasted one day and a half using an Intel core i3 with 16G of memory.
 ## What is an "Information overflow" vulnerability?
 **Information overflow** is a vulnerabilty that appears when a hidden repository contains some characteristic that can reveal part or all of his content.
 ## What is the "Pwned Passwords list" (PPL)?
@@ -13,7 +13,7 @@ As [haveibeenpwned](https://haveibeenpwned.com/Passwords) explains,
 
 This list doesn't come with the passwords in clear text, it comes as a list of SHA1 or MD5 hashes as a precaution that no one can discover others passwords.
 
-Sample of head **00000** (the last number shows the number of users sharing the same password):
+_Sample of head **00000** (the last number shows the number of users sharing the same password)_:
 ```
 0005AD76BD555C1D6D771DE417A4B87E4B4:10
 000A8DAE4228F821FB418F59826079BF368:4
@@ -67,6 +67,7 @@ Clone the git repository
 ```
 cd $HOME/src
 git clone https://github.com/redsnk/guessc
+cd guessc
 ```
 Compile
 ```
@@ -93,5 +94,15 @@ If you want **test de tool** only without caching any hash, you can execute it w
 if you want to see all the options, execute **guessc** without any argument, you can increase the number of threads with the parameter **-t** per example.
 ```
 ./guessc -t8 ""
+```
+
+## What is checkpwd.sh?
+**checkpwd.sh** is a script to check if one passwords exists in the PPL:
+```
+./checkpwd.sh qwertyuiop
+```
+```
+output:
+D2029F64D445BD131FFAA399A42D2F8E7DC:2119106
 ```
 Enjoy!
