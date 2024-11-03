@@ -1,7 +1,7 @@
 # Guessc
 A tool to recover part of the [Pwnd Passwords list](https://haveibeenpwned.com/Passwords) without using dicionaries or brute force.
 ## What is Guessc?
-Guessc is a tool to recover part of the [Pwnd Passwords list](https://haveibeenpwned.com/Passwords) without using dictionaries or brute force and taking advantage of something I called **information overflow vulnerability**.
+Guessc is a tool to recover part of the [Pwnd Passwords list](https://haveibeenpwned.com/Passwords) without using dictionaries or brute force and taking advantage of something I've called **information overflow vulnerability**.
 ## So, how many passwords are we talking about?
 In numbers, the last execution revealed 154 millions of passwords from a list of 936 millions of hashes. It lasted one day and a half using an Intel core i3 with 16G of memory.
 ## What is an "Information overflow" vulnerability?
