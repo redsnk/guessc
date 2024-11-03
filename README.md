@@ -27,7 +27,7 @@ _Sample of head **00000** (the last number shows the number of users sharing the
 00CAEF405439D57847A8657218C618160B2:21
 ```
 ## Why is the PPL vulnerable?
-The **massive amount of data** and the **intrinsic nature of the passwords** have created a sequencial relationship between them, the password choosen by one user it's, sometimes, shared and expanded by other users with one more symbol in a global password tree:
+The **massive amount of data** and the **intrinsic nature of the passwords** have created a sequencial relationship between them. The password choosen by one user it's, sometimes, shared and expanded by other users with one more symbol in a global password tree:
 
 ```mermaid
 graph LR;
