@@ -97,7 +97,7 @@ if you want to see all the options, execute **guessc** without any argument, you
 ```
 
 ## What is checkpwd.sh?
-**checkpwd.sh** is a script to check if one passwords exists in the PPL:
+**checkpwd.sh** is a script to check if one passwords exists inside the [PPL](https://haveibeenpwned.com/Passwords):
 ```
 ./checkpwd.sh qwertyuiop
 ```
