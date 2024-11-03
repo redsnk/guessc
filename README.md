@@ -5,7 +5,7 @@ Guessc is a tool to recover part of the [Pwnd Passwords list](https://haveibeenp
 ## So, how many passwords are we talking about?
 In numbers, the last execution revealed 154 millions of passwords from a list of 936 millions of hashes. It lasted one day and a half using an Intel core i3 with 16G of memory.
 ## What is an "Information overflow" vulnerability?
-**Information overflow** is a vulnerabilty that appears when a hidden repository contains some characteristic that can reveal part or all of his content.
+**Information overflow** is a vulnerabilty that appears when a hidden repository contains some characteristic that can reveal part or all of its content.
 ## What is the "Pwned Passwords list" (PPL)?
 As [haveibeenpwned](https://haveibeenpwned.com/Passwords) explains,
 
