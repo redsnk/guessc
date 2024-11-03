@@ -81,9 +81,9 @@ Guessc needs **14G** of free memory to load all the hashes, if you have it, exec
 ```
 Be patient, it will take some time to load all the hashes into the memory (40 min. aprox.)
 
-Passords discovered will be saved on **guessc.txt** file.
+Passwords discovered will be saved on **guessc.txt** file.
 
-If you have less memory you can pass the amount, per example 4G, **but the speed will drop dramatically due to disk access**:
+If you have less memory, you can pass the amount, per example 4G, **but the speed will drop dramatically due to disk access**:
 ```
 ./guessc -c4 ""
 ```
@@ -97,7 +97,7 @@ if you want to see all the options, execute **guessc** without any argument, you
 ```
 
 ## What is checkpwd.sh?
-**checkpwd.sh** is a script to check if one passwords exists inside the [PPL](https://haveibeenpwned.com/Passwords):
+**checkpwd.sh** is a script to check if one password exists inside the [PPL](https://haveibeenpwned.com/Passwords):
 ```
 ./checkpwd.sh qwertyuiop
 ```
