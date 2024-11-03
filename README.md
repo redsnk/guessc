@@ -63,13 +63,13 @@ curl -s --retry 10 --retry-all-errors --remote-name-all --parallel --parallel-ma
 ```
 Be patient, it will take some time to download all the hashes (30G aprox.)
 
-Clone the git repository
+Clone the git repository:
 ```
 cd $HOME/src
 git clone https://github.com/redsnk/guessc
 cd guessc
 ```
-Compile
+Compile:
 ```
 make
 ```
