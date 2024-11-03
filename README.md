@@ -75,7 +75,7 @@ make
 ```
 Execute with the parameters you need.
 
-Guessc needs **14G** of free of memory to load all the hashes, if you have it, execute:
+Guessc needs **14G** of free memory to load all the hashes, if you have it, execute:
 ```
 ./guessc ""
 ```
