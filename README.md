@@ -43,7 +43,7 @@ graph LR;
     johnanthofer-->johnanthofer1;
     johnanthofer1-->johnanthofer1Q;
 ```
-It's also possible that someone decided to hash not only the passwords but also their smaller parts. Some recovered passwords show a complexity that is difficult to explain due to the reuse of root passwords between users:
+It's also possible that someone decided to hash, not only the passwords, but also their smaller parts. Some recovered passwords show a complexity that is difficult to explain due to the reuse of root passwords between users:
 
 
 | Password | SHA1 Tail | Count |
