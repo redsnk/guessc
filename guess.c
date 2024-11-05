@@ -189,8 +189,32 @@ int n;
     return (TRUE);
 }
 
+int get_entry_pos (struct entries *en,struct entry ei) {
+int t,b,m,s;
+unsigned long v,vm;
+
+    v = get_value_entry(ei);
+    t = -1;
+    b = en->num;
+    while ((b-t)>1) {
+        m = t+((b-t)/2);
+        vm = get_value_entry(en->e[m]);
+        if (vm > v) {
+                b = m;
+        }
+        else if (vm < v) {
+                t = m;
+        }
+        else {
+                // match
+                return (m);
+        }
+    }
+    return (b);
+}
+
 /*
-int find_tail_entries (char *tail,struct entries *en) {
+int find_tail_entries_old (char *tail,struct entries *en) {
 int n;
 struct entry ei;
 
@@ -214,34 +238,48 @@ unsigned long v,vm;
     t = -1;
     b = en->num;
     while ((b-t)>1) {
-	m = (b-t)/2;
+	m = t+((b-t)/2);
 	vm = get_value_entry(en->e[m]);
 	if (vm > v) {
-		b = vm;
+		b = m;
 	}
 	else if (vm < v) {
-		t = vm;
+		t = m;
 	}
 	else {
 		// match?
 		s = m;
 		do {
-			if (cmp_entry(ei,en->e[s])) return (TRUE);
+			if (cmp_entry(ei,en->e[s])) {
+				return (TRUE);
+			}
 			s++;
 		}
 		while ((s<b) && (v==get_value_entry(en->e[s])));
 		s = m-1;
 		while ((s>t) && (v==get_value_entry(en->e[s]))) {
-			if (cmp_entry(ei,en->e[s])) return (TRUE);
+			if (cmp_entry(ei,en->e[s])) {
+				/*
+				if (!find_tail_entries_old(tail,en)) {
+					panic("find_tail_entries mismatch (TRUE)\n");
+				}
+				*/
+				return (TRUE);
+			}
 			s--;
 		}
 		break;
 	}
     }
+    /*
+    if (find_tail_entries_old(tail,en)) {
+	panic("find_tail_entries mismatch (FALSE)\n");
+    }
+    */
     return (FALSE);
 }
 
-
+/*
 void sort_last_entry (struct entries *en) {
 int n;
 long vt,vb;
@@ -259,6 +297,31 @@ struct entry t,b;
 	else break;
     }
 }
+*/
+
+char mem[1024*1024*10];
+
+void insert_entry (struct entries *en,struct entry ei) {
+int p,n,s;
+
+    if (!en->num) {
+	en->e[en->num++] = ei;
+    }
+    else {
+	p = get_entry_pos (en,ei);
+	if (p == en->num) {
+		en->e[en->num++] = ei;
+	}
+	else {
+		n = en->num-p;
+		s = n*sizeof(struct entry);
+		memcpy(mem,&en->e[p],s);
+		en->e[p] = ei;
+		memcpy(&en->e[p+1],mem,s);
+		en->num++;
+	}
+    }
+}
 
 struct entries *txt_to_entries(char *txt,int len) {
 struct entries *en;
@@ -273,8 +336,11 @@ struct entry ei;
 	//printf("%s\n",t);
 	tail_to_entry(t,&ei);
 	t = p+2;
+	/*
 	en->e[en->num++] = ei;
 	sort_last_entry(en);
+	*/
+	insert_entry(en,ei);
     }
     en = realloc(en,sizeof(struct entries)+(sizeof(struct entry)*(en->num-1)));
     return (en);
