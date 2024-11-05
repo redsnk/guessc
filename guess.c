@@ -174,6 +174,10 @@ char buffer[MAX_STR];
     hex_to_bytes(buffer,e->h);
 }
 
+unsigned long get_value_entry (struct entry e) {
+	return (*((unsigned long *)&e));
+}
+
 int cmp_entry (struct entry e1,struct entry e2) {
 int n;
 
@@ -185,6 +189,7 @@ int n;
     return (TRUE);
 }
 
+/*
 int find_tail_entries (char *tail,struct entries *en) {
 int n;
 struct entry ei;
@@ -196,6 +201,63 @@ struct entry ei;
 	}
     }
     return (FALSE);
+}
+*/
+
+int find_tail_entries (char *tail,struct entries *en) {
+int t,b,m,s;
+struct entry ei;
+unsigned long v,vm;
+
+    tail_to_entry(tail,&ei);
+    v = get_value_entry(ei);
+    t = -1;
+    b = en->num;
+    while ((b-t)>1) {
+	m = (b-t)/2;
+	vm = get_value_entry(en->e[m]);
+	if (vm > v) {
+		b = vm;
+	}
+	else if (vm < v) {
+		t = vm;
+	}
+	else {
+		// match?
+		s = m;
+		do {
+			if (cmp_entry(ei,en->e[s])) return (TRUE);
+			s++;
+		}
+		while ((s<b) && (v==get_value_entry(en->e[s])));
+		s = m-1;
+		while ((s>t) && (v==get_value_entry(en->e[s]))) {
+			if (cmp_entry(ei,en->e[s])) return (TRUE);
+			s--;
+		}
+		break;
+	}
+    }
+    return (FALSE);
+}
+
+
+void sort_last_entry (struct entries *en) {
+int n;
+long vt,vb;
+struct entry t,b;
+
+    for (n=en->num-1;n>0;n--) {
+	t = en->e[n-1];
+	b = en->e[n];
+	vt = get_value_entry(t);
+	vb = get_value_entry(b);
+	if (vb < vt) {
+		en->e[n] = t;
+		en->e[n-1] = b;
+	}
+	else break;
+    }
 }
 
 struct entries *txt_to_entries(char *txt,int len) {
@@ -212,6 +274,7 @@ struct entry ei;
 	tail_to_entry(t,&ei);
 	t = p+2;
 	en->e[en->num++] = ei;
+	sort_last_entry(en);
     }
     en = realloc(en,sizeof(struct entries)+(sizeof(struct entry)*(en->num-1)));
     return (en);
