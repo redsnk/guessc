@@ -9,14 +9,14 @@
 #include <openssl/evp.h>
 #endif
 
-#define MY_VERSION	"v0.5"
+#define MY_VERSION	"v0.6"
 #define TRUE		(1)
 #define FALSE		(0)
 #define MAX_STR		(1024)
 #define MIN_STR		(64)
 #define BASE 		"%s/src/pwnedpasswords/%s"
 #define ALPHA		"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"·$%&/()='?¡¿<>,;.:-_+* |@#~[]^\\"
-#define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz"
+#define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz0123456789"
 #define MAX_DEEP	0
 #define SHA1_LEN	20
 #define LOG		"guessc.txt"
@@ -31,6 +31,7 @@ int max_deep = MAX_DEEP;
 int deep_min = FALSE;
 int max_threads = MAX_THREADS;
 long long recovered = 0;
+long long d_recovered = 0;
 
 #ifndef USE_OPENSSL
 // https://www.nayuki.io/page/fast-sha1-hash-implementation-in-x86-assembly
@@ -381,6 +382,7 @@ FILE *open_append(void) {
 FILE *f;
 
     recovered = 0;
+    d_recovered = 0;
     if (!llog) return (NULL);
     remove(LOG);
     f = fopen(LOG, "a");
@@ -392,17 +394,20 @@ FILE *f;
 
 pthread_mutex_t mutex_append = PTHREAD_MUTEX_INITIALIZER;
 
-void write_append(FILE *f,char *p) {
+void write_append(FILE *f,char *p,int deep) {
     pthread_mutex_lock (&mutex_append);
     recovered++;
+    if (deep) {
+	d_recovered++;
+    }
     if (llog) {
-	printf("Passwords recovered: %lli\r",recovered);
+	printf("Passwords recovered: %lli deep:%lli\r",recovered,d_recovered);
 	fflush(stdout);
     	fwrite (p,1,strlen(p),f);
     	fwrite ("\n",1,1,f);
     }
     else {
-	printf("%s\n",p);
+	printf("%s p:%lli d:%lli\n",p,recovered,d_recovered);
     }
     pthread_mutex_unlock (&mutex_append);
 }
@@ -412,16 +417,19 @@ void close_append(FILE *f) {
     fclose(f);
 }
 
-void checkword (FILE *f,char *w,int deep) {
+void checkword (FILE *f,char *w,int deep,int predeep) {
 int i;
 char *a = ALPHA;
+char *m = ALPHA_MIN;
 char c[2];
 char p[MAX_STR];
 char res[MAX_STR];
 
+    /*
     if (deep_min && deep && (strlen(w)>=FORCE_DEEP)) {
 	a = ALPHA_MIN;
     }
+    */
     //printf("a = '%s'\n",a);
     c[1] = 0;
     for (i=0;i<strlen(a);i++) {
@@ -431,11 +439,12 @@ char res[MAX_STR];
 	if (checkpass(p,res)) {
 		//printf("%s\n",p);
 		//appendpass(p);
-		write_append(f,p);
-		checkword(f,p,0);
+		write_append(f,p,predeep);
+		checkword(f,p,0,predeep);
 	}
-	else if ((deep < max_deep) || (strlen(p)<FORCE_DEEP)) {
-		checkword(f,p,deep+1);
+	else if (((deep < max_deep) && (!deep_min || (strchr(m,*c)!=NULL)))|| (strlen(p)<FORCE_DEEP)) {
+		//printf("'%s' deep char: %s\n",w,c);
+		checkword(f,p,deep+1,predeep|(strlen(p)>=FORCE_DEEP));
 	}
     }
 }
@@ -470,19 +479,20 @@ struct cw_params {
     FILE *f;
     char w[MAX_STR];
     int deep;
+    int predeep;
 };
 
 void *checkword_function (void *ptr) {
 struct cw_params *p;
 
     p = (struct cw_params *) ptr;
-    checkword (p->f,p->w,p->deep);
+    checkword (p->f,p->w,p->deep,p->predeep);
     //printf("exit thread '%s' (%i-1)\n",p->w,get_threads());
     dec_threads();
     free(p);
 }
 
-void launch_checkword (FILE *f,char *w,int deep) {
+void launch_checkword (FILE *f,char *w,int deep,int predeep) {
 pthread_t thread;
 struct cw_params *p;
 
@@ -491,6 +501,7 @@ struct cw_params *p;
     p->f = f;
     strcpy (p->w,w);
     p->deep = deep;
+    p->predeep = predeep;
     inc_threads();
     pthread_create( &thread, NULL, checkword_function, (void*) p);
 }
@@ -510,7 +521,7 @@ void end_threads (void) {
 }
 
 
-void checkword_mt (FILE *f,char *w,int deep) {
+void checkword_mt (FILE *f,char *w) {
 int i;
 char a[] = ALPHA;
 char c[2];
@@ -526,13 +537,13 @@ char res[MAX_STR];
         strcat (p,c);
         if (checkpass(p,res)) {
                 //printf("checkword_mt launch '%s'\n",p);
-                write_append(f,p);
+                write_append(f,p,0);
 		wait_threads();
-                launch_checkword(f,p,0);
+                launch_checkword(f,p,0,FALSE);
         }
-        else if ((deep < max_deep) || (strlen(p)<FORCE_DEEP)) {
+        else if (strlen(p)<FORCE_DEEP) {
 		wait_threads();
-                launch_checkword(f,p,deep+1);
+                launch_checkword(f,p,1,FALSE);
         }
     }
     end_threads();
@@ -598,7 +609,7 @@ char root[MAX_STR];
     printf("passwords in cache: %lli\n",c);
 #endif
     f = open_append();
-    checkword_mt(f,root,0);
+    checkword_mt(f,root);
     close_append(f);
     return (0);
 }
