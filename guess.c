@@ -543,7 +543,7 @@ pthread_mutex_t mutex_append = PTHREAD_MUTEX_INITIALIZER;
 
 void write_append(FILE *f,char *p,int deep) {
 struct timeval newtime;
-long long d;
+long long n,o;
 
     pthread_mutex_lock (&mutex_append);
     recovered++;
@@ -552,8 +552,9 @@ long long d;
     }
     if (llog) {
 	gettimeofday(&newtime,NULL);
-	d = ((newtime.tv_sec - oldtime.tv_sec)*1000L)+((newtime.tv_usec - oldtime.tv_usec)/1000L);
-	if (d >= DISPLAY_MS) {
+	o = (oldtime.tv_sec*1000L)+(oldtime.tv_usec)/1000L;
+	n = (newtime.tv_sec*1000L)+(newtime.tv_usec)/1000L;
+	if ((n-o) >= DISPLAY_MS) {
 		oldtime = newtime;
 		printf("Passwords recovered: %lli deep:%lli\r",recovered,d_recovered);
 		fflush(stdout);
