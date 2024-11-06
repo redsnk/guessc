@@ -23,6 +23,7 @@
 #define MAX_MEMORY 	(1024L*1024L*1024L*14L)
 #define FORCE_DEEP	4
 #define MAX_THREADS	4
+#define MEM_INSERT	(1024*1024*10)
 #define PRECACHE
 
 long long max_memory = MAX_MEMORY;
@@ -130,7 +131,7 @@ int n;
 0000c030: 3a33                                     :3
 */
 
-unsigned char hex_to_num(char c) {
+static inline unsigned char hex_to_num(char c) {
 unsigned char n;
 
     if ((c>='0') && (c<='9')) {
@@ -142,7 +143,7 @@ unsigned char n;
     panic("hex_to_num error.");
 }
 
-unsigned char hex_to_byte(char *txt) {
+static inline unsigned char hex_to_byte(char *txt) {
 unsigned char c;
 
     c = (hex_to_num(txt[0]) << 8) + hex_to_num(txt[1]);
@@ -174,22 +175,32 @@ char buffer[MAX_STR];
     hex_to_bytes(buffer,e->h);
 }
 
-unsigned long get_value_entry (struct entry e) {
-	return (*((unsigned long *)&e));
+static inline unsigned long get_value_entry (struct entry *e) {
+	return (*((unsigned long *)e));
 }
 
-int cmp_entry (struct entry e1,struct entry e2) {
+/*
+int cmp_entry (struct entry *e1,struct entry *e2) {
 int n;
 
     for (n=0;n<16;n++) {
-	if (e1.h[n] != e2.h[n]) {
+	if (e1->h[n] != e2->h[n]) {
 		return (FALSE);
 	}
     }
     return (TRUE);
 }
+*/
 
-int get_entry_pos (struct entries *en,struct entry ei) {
+static inline int cmp_entry (struct entry *e1,struct entry *e2) {
+unsigned long long *l1,*l2;
+
+    l1 = (unsigned long long *) e1;	// 8 bytes
+    l2 = (unsigned long long *) e2;	// 8 bytes
+    return ((l1[0] == l2[0]) && (l1[1] == l2[1]));
+}
+
+int get_entry_pos (struct entries *en,struct entry *ei) {
 int t,b,m,s;
 unsigned long v,vm;
 
@@ -198,7 +209,7 @@ unsigned long v,vm;
     b = en->num;
     while ((b-t)>1) {
         m = t+((b-t)/2);
-        vm = get_value_entry(en->e[m]);
+        vm = get_value_entry(&en->e[m]);
         if (vm > v) {
                 b = m;
         }
@@ -234,12 +245,12 @@ struct entry ei;
 unsigned long v,vm;
 
     tail_to_entry(tail,&ei);
-    v = get_value_entry(ei);
+    v = get_value_entry(&ei);
     t = -1;
     b = en->num;
     while ((b-t)>1) {
 	m = t+((b-t)/2);
-	vm = get_value_entry(en->e[m]);
+	vm = get_value_entry(&en->e[m]);
 	if (vm > v) {
 		b = m;
 	}
@@ -250,15 +261,15 @@ unsigned long v,vm;
 		// match?
 		s = m;
 		do {
-			if (cmp_entry(ei,en->e[s])) {
+			if (cmp_entry(&ei,&en->e[s])) {
 				return (TRUE);
 			}
 			s++;
 		}
-		while ((s<b) && (v==get_value_entry(en->e[s])));
+		while ((s<b) && (v==get_value_entry(&en->e[s])));
 		s = m-1;
-		while ((s>t) && (v==get_value_entry(en->e[s]))) {
-			if (cmp_entry(ei,en->e[s])) {
+		while ((s>t) && (v==get_value_entry(&en->e[s]))) {
+			if (cmp_entry(&ei,&en->e[s])) {
 				/*
 				if (!find_tail_entries_old(tail,en)) {
 					panic("find_tail_entries mismatch (TRUE)\n");
@@ -299,24 +310,24 @@ struct entry t,b;
 }
 */
 
-char mem[1024*1024*10];
+char mem[MEM_INSERT];
 
-void insert_entry (struct entries *en,struct entry ei) {
+void insert_entry (struct entries *en,struct entry *ei) {
 int p,n,s;
 
     if (!en->num) {
-	en->e[en->num++] = ei;
+	en->e[en->num++] = *ei;
     }
     else {
 	p = get_entry_pos (en,ei);
 	if (p == en->num) {
-		en->e[en->num++] = ei;
+		en->e[en->num++] = *ei;
 	}
 	else {
 		n = en->num-p;
 		s = n*sizeof(struct entry);
 		memcpy(mem,&en->e[p],s);
-		en->e[p] = ei;
+		en->e[p] = *ei;
 		memcpy(&en->e[p+1],mem,s);
 		en->num++;
 	}
@@ -340,7 +351,7 @@ struct entry ei;
 	en->e[en->num++] = ei;
 	sort_last_entry(en);
 	*/
-	insert_entry(en,ei);
+	insert_entry(en,&ei);
     }
     en = realloc(en,sizeof(struct entries)+(sizeof(struct entry)*(en->num-1)));
     return (en);
@@ -421,6 +432,9 @@ FILE *f;
         if (l != ll) {
                 panic("Error: fread");
         }
+	if (ll > MEM_INSERT) {
+		panic("Error: MEM_INSERT");
+	}
 	fclose(f);
         // add '0d0a00' at the end
         p[l] = '\r';
