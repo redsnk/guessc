@@ -26,7 +26,7 @@
 #define MAX_THREADS	4
 #define MEM_INSERT	(1024*1024*10)
 #define PRECACHE
-#define DISPLAY_MS	1000
+#define DISPLAY_MS	500
 
 long long max_memory = MAX_MEMORY;
 int llog = TRUE;
@@ -552,14 +552,14 @@ long long d;
     }
     if (llog) {
 	gettimeofday(&newtime,NULL);
-	d = (newtime.tv_usec - oldtime.tv_usec)/1000L;
+	d = ((newtime.tv_sec - oldtime.tv_sec)*1000L)+((newtime.tv_usec - oldtime.tv_usec)/1000L);
 	if (d >= DISPLAY_MS) {
+		oldtime = newtime;
 		printf("Passwords recovered: %lli deep:%lli\r",recovered,d_recovered);
 		fflush(stdout);
-    		fwrite (p,1,strlen(p),f);
-    		fwrite ("\n",1,1,f);
-		oldtime = newtime;
 	}
+    	fwrite (p,1,strlen(p),f);
+    	fwrite ("\n",1,1,f);
     }
     else {
 	printf("%s p:%lli d:%lli\n",p,recovered,d_recovered);
