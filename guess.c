@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/time.h>
 #ifdef USE_OPENSSL
 #include <openssl/evp.h>
 #endif
@@ -25,6 +26,7 @@
 #define MAX_THREADS	4
 #define MEM_INSERT	(1024*1024*10)
 #define PRECACHE
+#define DISPLAY_MS	1000
 
 long long max_memory = MAX_MEMORY;
 int llog = TRUE;
@@ -33,6 +35,7 @@ int deep_min = FALSE;
 int max_threads = MAX_THREADS;
 long long recovered = 0;
 long long d_recovered = 0;
+struct timeval oldtime;
 
 #ifndef USE_OPENSSL
 // https://www.nayuki.io/page/fast-sha1-hash-implementation-in-x86-assembly
@@ -526,6 +529,7 @@ FILE *f;
 
     recovered = 0;
     d_recovered = 0;
+    gettimeofday(&oldtime,NULL);
     if (!llog) return (NULL);
     remove(LOG);
     f = fopen(LOG, "a");
@@ -538,16 +542,24 @@ FILE *f;
 pthread_mutex_t mutex_append = PTHREAD_MUTEX_INITIALIZER;
 
 void write_append(FILE *f,char *p,int deep) {
+struct timeval newtime;
+long long d;
+
     pthread_mutex_lock (&mutex_append);
     recovered++;
     if (deep) {
 	d_recovered++;
     }
     if (llog) {
-	printf("Passwords recovered: %lli deep:%lli\r",recovered,d_recovered);
-	fflush(stdout);
-    	fwrite (p,1,strlen(p),f);
-    	fwrite ("\n",1,1,f);
+	gettimeofday(&newtime,NULL);
+	d = (newtime.tv_usec - oldtime.tv_usec)/1000L;
+	if (d >= DISPLAY_MS) {
+		printf("Passwords recovered: %lli deep:%lli\r",recovered,d_recovered);
+		fflush(stdout);
+    		fwrite (p,1,strlen(p),f);
+    		fwrite ("\n",1,1,f);
+		oldtime = newtime;
+	}
     }
     else {
 	printf("%s p:%lli d:%lli\n",p,recovered,d_recovered);
