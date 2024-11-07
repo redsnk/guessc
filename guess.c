@@ -20,6 +20,7 @@
 #define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz0123456789"
 #define MAX_DEEP	0
 #define SHA1_LEN	20
+#define TAIL_BYTES	16		// 18-2
 #define LOG		"guessc.txt"
 #define MAX_MEMORY 	(1024L*1024L*1024L*14L)
 #define FORCE_DEEP	4
@@ -94,7 +95,7 @@ int i;
 #endif
 //
 struct entry {
-	unsigned char h[16];
+	unsigned char h[TAIL_BYTES];
 };
 
 struct entries {
@@ -124,6 +125,27 @@ int n;
     }
 }
 
+void print_entry (struct entry *e) {
+int n;
+
+    printf("entry: ");
+    for(n=0;n<TAIL_BYTES;n++) {
+        printf("%02X",e->h[n]);
+    }
+    printf("\n");
+}
+
+void print_entries (struct entries *ei) {
+int n;
+
+    printf("entries:\n");
+    printf("--------\n");
+    for (n=0;n<ei->num;n++) {
+	print_entry(&ei->e[n]);
+    }
+    printf("--------\n");
+}
+
 /*
 0000bfd0: 4231 4130 4431 4144 3945 3930 4345 3432  B1A0D1AD9E90CE42
 0000bfe0: 3130 3a31 0d0a 4646 4634 4438 4134 4445  10:1..FFF4D8A4DE
@@ -149,16 +171,16 @@ unsigned char n;
 static inline unsigned char hex_to_byte(char *txt) {
 unsigned char c;
 
-    c = (hex_to_num(txt[0]) << 8) + hex_to_num(txt[1]);
+    c = (hex_to_num(txt[0]) << 4) + hex_to_num(txt[1]);
     return (c);
 }
 
-int hex_to_bytes(char *txt,char *b) {
-int i=0;
+static inline int hex_to_bytes(char *txt,char *b,int len) {
+int i=0,n;
 char *p;
 
     p = txt;
-    while (*p) {
+    for (n=0;n<len;n++) {
 	b[i++] = hex_to_byte(p);
 	p += 2;
     }
@@ -169,39 +191,46 @@ void tail_to_entry(char *txt,struct entry *e) {
 char *p;
 char buffer[MAX_STR];
 
+    //printf("%s\n",txt);
     p = strchr(txt,':');
     if (p != NULL) {
 	*p = 0;
     }
     strcpy(buffer,"0");
     strcat(buffer,txt);
-    hex_to_bytes(buffer,e->h);
+    hex_to_bytes(buffer,e->h,TAIL_BYTES);
+    //print_entry(e);
 }
 
 static inline unsigned long get_value_entry (struct entry *e) {
 	return (*((unsigned long *)e));
 }
 
-/*
 int cmp_entry (struct entry *e1,struct entry *e2) {
 int n;
 
-    for (n=0;n<16;n++) {
+    for (n=0;n<TAIL_BYTES;n++) {
 	if (e1->h[n] != e2->h[n]) {
 		return (FALSE);
 	}
     }
     return (TRUE);
 }
-*/
 
+
+/*
 static inline int cmp_entry (struct entry *e1,struct entry *e2) {
 unsigned long long *l1,*l2;
 
     l1 = (unsigned long long *) e1;	// 8 bytes
     l2 = (unsigned long long *) e2;	// 8 bytes
-    return ((l1[0] == l2[0]) && (l1[1] == l2[1]));
+    if ((l1[0] == l2[0]) && (l1[1] == l2[1]) && (e1->h[16]==e2->h[16]) && (e1->h[17]==e2->h[17])) {
+	return (TRUE);
+    }
+    return (FALSE);
 }
+*/
+
 
 int get_entry_pos (struct entries *en,struct entry *ei) {
 int t,b,m,s;
@@ -242,13 +271,14 @@ struct entry ei;
 }
 */
 
-int find_tail_entries (char *tail,struct entries *en) {
+int find_tail_entries (struct entry *tail,struct entries *en) {
 int t,b,m,s;
-struct entry ei;
+struct entry *ei;
 unsigned long v,vm;
 
-    tail_to_entry(tail,&ei);
-    v = get_value_entry(&ei);
+    //tail_to_entry(tail,&ei);
+    ei = tail;
+    v = get_value_entry(ei);
     t = -1;
     b = en->num;
     while ((b-t)>1) {
@@ -264,7 +294,7 @@ unsigned long v,vm;
 		// match?
 		s = m;
 		do {
-			if (cmp_entry(&ei,&en->e[s])) {
+			if (cmp_entry(ei,&en->e[s])) {
 				return (TRUE);
 			}
 			s++;
@@ -272,7 +302,7 @@ unsigned long v,vm;
 		while ((s<b) && (v==get_value_entry(&en->e[s])));
 		s = m-1;
 		while ((s>t) && (v==get_value_entry(&en->e[s]))) {
-			if (cmp_entry(&ei,&en->e[s])) {
+			if (cmp_entry(ei,&en->e[s])) {
 				/*
 				if (!find_tail_entries_old(tail,en)) {
 					panic("find_tail_entries mismatch (TRUE)\n");
@@ -349,6 +379,7 @@ struct entry ei;
 	p[0] = 0;
 	//printf("%s\n",t);
 	tail_to_entry(t,&ei);
+	//print_entry(&ei);
 	t = p+2;
 	/*
 	en->e[en->num++] = ei;
@@ -360,21 +391,27 @@ struct entry ei;
     return (en);
 }
 
-int head_to_index(char *head) {
+/*
+static inline int head_to_index(char *head) {
 int n;
 
-    n = (int)strtol(head, NULL, 16);
+    //n = (int)strtol(head, NULL, 16);
     //printf("head: '%s' = %i\n",head,n);
+    n = ((int) hex_to_num(head[0])) << 16;
+    n += ((int) hex_to_num(head[1])) << 12;
+    n += ((int) hex_to_num(head[2])) << 8;
+    n += ((int) hex_to_num(head[3])) << 4;
+    n += (int) hex_to_num(head[4]);
     return (n);
 }
+*/
 
-int add_cache_entries (char *head,struct entries *e) {
-int n;
-
+int add_cache_entries (int head,struct entries *e) {
+//int n;
     if (memory < max_memory) {
-    	n = head_to_index(head);
-    	if (idx.i[n] == NULL) {
-		idx.i[n] = e;
+    	//n = head_to_index(head);
+    	if (idx.i[head] == NULL) {
+		idx.i[head] = e;
 		memory += sizeof(struct entries)+(sizeof(struct entry)*(e->num-1));
         	return (TRUE);
     	}
@@ -383,11 +420,13 @@ int n;
     return (FALSE);
 }
 
-struct entries *get_entries_cache (char *head) {
+static inline struct entries *get_entries_cache (int head) {
+/*
 int n;
 
     n = head_to_index(head);
-    return (idx.i[n]);
+*/
+    return (idx.i[head]);
 }
 
 #ifdef USE_OPENSSL
@@ -417,14 +456,17 @@ char tmp[MAX_STR];
     }
 }
 
-struct entries *get_entries_disk (char *head) {
+struct entries *get_entries_disk (int head) {
 struct entries *e;
 char buffer[MAX_STR];
+char s_head[MIN_STR];
 long l,ll;
 char *p;
 FILE *f;
 
-    sprintf (buffer,BASE,getenv("HOME"),head);
+    sprintf(s_head,"%05X",head);
+    sprintf (buffer,BASE,getenv("HOME"),s_head);
+    //printf("file: %s\n",buffer);
     f = fopen(buffer, "r");
     if (f != NULL) {
         fseek(f,0L,SEEK_END);
@@ -445,6 +487,7 @@ FILE *f;
         p[l+2] = 0;
         e = txt_to_entries(p,l);
         free(p);
+        //print_entries(e);
         //printf("%li\n",l);
     }
     else {
@@ -456,7 +499,7 @@ FILE *f;
 
 long long fill_cache (void) {
 int n = 0;
-char head[MIN_STR];
+//char head[MIN_STR];
 struct entries *e;
 long long count = 0L;
 
@@ -464,21 +507,21 @@ long long count = 0L;
     printf("Caching hashes ...\n");
     for (n=0;n<ENTRIES;n++) {
         if (memory >= max_memory) {
-		printf("fill_cache: memory full\n");
+		printf("\nfill_cache: memory full\n");
 		break;
 	}
-        sprintf(head,"%05X",n);
+        //sprintf(head,"%05X",n);
 	//printf("try head %s\n",head);
 	//printf("Memory: %lliM\n",memory/(1024L*1024L));
-	e = get_entries_disk(head);
+	e = get_entries_disk(n);
 	if (e == NULL) {
 		panic("fill_cache get_entries_disk.");
 	}
-        if (!add_cache_entries (head,e)) {
+        if (!add_cache_entries (n,e)) {
 		panic("fill_cache add_cache_entries.");
 	}
 	count += e->num;
-	printf("Head: %s Memory: %lliM Passwords: %lli\r",head,memory/(1024L*1024L),count);
+	printf("Head: %05X Memory: %lliM Passwords: %lli\r",n,memory/(1024L*1024L),count);
 	fflush(stdout);
 	//printf("head %s in cache\n",head);
     }
@@ -486,40 +529,64 @@ long long count = 0L;
     return(count);
 }
 
+int hash_to_index (char *hash) {
+int n;
+
+    n = (((int)hash[0]) & 0xf0) << 12;
+    n += (((int)hash[0]) & 0x0f) << 12;
+    n += (((int)hash[1]) & 0xf0) << 4;
+    n += (((int)hash[1]) & 0x0f) << 4;
+    n += (((int)hash[2]) & 0xf0) >> 4;
+    return (n);
+}
+
+static inline void hash_to_tail (char *hash,struct entry *e)  {
+    *e = *((struct entry *) (&hash[2]));
+    e->h[0] &= 0x0f;
+}
 
 int checkpass (char *pass,char *res) {
 unsigned char hash[SHA1_LEN];
 char buffer[MAX_STR];
-char head[MIN_STR];
-char tail[MIN_STR];
+//char head[MIN_STR];
+//char tail[MIN_STR];
+struct entry tail;
 FILE *f;
 long l,ll;
 char *p;
 struct entries *e;
 int lcache;
 int lret = FALSE;
+int n_head;
 
+    //printf("pass: %s\n",pass);
     sha1(pass,hash);
-    sha1_to_string (hash,buffer);
-    //printf ("%s\n",buffer);
-    strcpy(head,buffer);
-    head[5] = 0;
-    strcpy(tail,buffer+5);
+    //sha1_to_string (hash,buffer);
+    //printf("%s\n",buffer);
+    n_head = hash_to_index (hash);
+    //printf("head: %05X\n",n_head);
+    //strcpy(head,buffer);
+    //head[5] = 0;
+    //strcpy(tail,buffer+5);
+    hash_to_tail (hash,&tail);
+    //print_entry(&tail);
     lcache = FALSE;
-    e = get_entries_cache (head);
+    //n_head = head_to_index(head);
+    e = get_entries_cache (n_head);
     if (e == NULL) {
-    	e = get_entries_disk (head);
+    	e = get_entries_disk (n_head);
     }
     else {
 	lcache = TRUE;
 	//printf("Head %s cached.\n",head);
     }
-    if (find_tail_entries(tail,e)) {
-	strcpy (res,tail);
+    //print_entries(e);
+    if (find_tail_entries(&tail,e)) {
+	strcpy (res,"<deprecated>");
 	lret = TRUE;
     }
     if (!lcache) {
-	add_cache_entries (head,e);
+	add_cache_entries (n_head,e);
     }
     return (lret);
 }
