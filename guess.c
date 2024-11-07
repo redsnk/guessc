@@ -5,25 +5,29 @@
 #include <unistd.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/time.h>
 #ifdef USE_OPENSSL
 #include <openssl/evp.h>
 #endif
 
-#define MY_VERSION	"v0.5"
+#define MY_VERSION	"v0.6"
 #define TRUE		(1)
 #define FALSE		(0)
 #define MAX_STR		(1024)
 #define MIN_STR		(64)
 #define BASE 		"%s/src/pwnedpasswords/%s"
 #define ALPHA		"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"·$%&/()='?¡¿<>,;.:-_+* |@#~[]^\\"
-#define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz"
+#define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz0123456789"
 #define MAX_DEEP	0
 #define SHA1_LEN	20
+#define TAIL_BYTES	16		// 18-2
 #define LOG		"guessc.txt"
 #define MAX_MEMORY 	(1024L*1024L*1024L*14L)
 #define FORCE_DEEP	4
 #define MAX_THREADS	4
+#define MEM_INSERT	(1024*1024*10)
 #define PRECACHE
+#define DISPLAY_MS	500
 
 long long max_memory = MAX_MEMORY;
 int llog = TRUE;
@@ -31,6 +35,8 @@ int max_deep = MAX_DEEP;
 int deep_min = FALSE;
 int max_threads = MAX_THREADS;
 long long recovered = 0;
+long long d_recovered = 0;
+struct timeval oldtime;
 
 #ifndef USE_OPENSSL
 // https://www.nayuki.io/page/fast-sha1-hash-implementation-in-x86-assembly
@@ -89,7 +95,7 @@ int i;
 #endif
 //
 struct entry {
-	unsigned char h[16];
+	unsigned char h[TAIL_BYTES];
 };
 
 struct entries {
@@ -119,6 +125,27 @@ int n;
     }
 }
 
+void print_entry (struct entry *e) {
+int n;
+
+    printf("entry: ");
+    for(n=0;n<TAIL_BYTES;n++) {
+        printf("%02X",e->h[n]);
+    }
+    printf("\n");
+}
+
+void print_entries (struct entries *ei) {
+int n;
+
+    printf("entries:\n");
+    printf("--------\n");
+    for (n=0;n<ei->num;n++) {
+	print_entry(&ei->e[n]);
+    }
+    printf("--------\n");
+}
+
 /*
 0000bfd0: 4231 4130 4431 4144 3945 3930 4345 3432  B1A0D1AD9E90CE42
 0000bfe0: 3130 3a31 0d0a 4646 4634 4438 4134 4445  10:1..FFF4D8A4DE
@@ -129,7 +156,7 @@ int n;
 0000c030: 3a33                                     :3
 */
 
-unsigned char hex_to_num(char c) {
+static inline unsigned char hex_to_num(char c) {
 unsigned char n;
 
     if ((c>='0') && (c<='9')) {
@@ -141,19 +168,19 @@ unsigned char n;
     panic("hex_to_num error.");
 }
 
-unsigned char hex_to_byte(char *txt) {
+static inline unsigned char hex_to_byte(char *txt) {
 unsigned char c;
 
-    c = (hex_to_num(txt[0]) << 8) + hex_to_num(txt[1]);
+    c = (hex_to_num(txt[0]) << 4) + hex_to_num(txt[1]);
     return (c);
 }
 
-int hex_to_bytes(char *txt,char *b) {
-int i=0;
+static inline int hex_to_bytes(char *txt,char *b,int len) {
+int i=0,n;
 char *p;
 
     p = txt;
-    while (*p) {
+    for (n=0;n<len;n++) {
 	b[i++] = hex_to_byte(p);
 	p += 2;
     }
@@ -164,27 +191,73 @@ void tail_to_entry(char *txt,struct entry *e) {
 char *p;
 char buffer[MAX_STR];
 
+    //printf("%s\n",txt);
     p = strchr(txt,':');
     if (p != NULL) {
 	*p = 0;
     }
     strcpy(buffer,"0");
     strcat(buffer,txt);
-    hex_to_bytes(buffer,e->h);
+    hex_to_bytes(buffer,e->h,TAIL_BYTES);
+    //print_entry(e);
 }
 
-int cmp_entry (struct entry e1,struct entry e2) {
+static inline unsigned long get_value_entry (struct entry *e) {
+	return (*((unsigned long *)e));
+}
+
+int cmp_entry (struct entry *e1,struct entry *e2) {
 int n;
 
-    for (n=0;n<16;n++) {
-	if (e1.h[n] != e2.h[n]) {
+    for (n=0;n<TAIL_BYTES;n++) {
+	if (e1->h[n] != e2->h[n]) {
 		return (FALSE);
 	}
     }
     return (TRUE);
 }
 
-int find_tail_entries (char *tail,struct entries *en) {
+
+/*
+static inline int cmp_entry (struct entry *e1,struct entry *e2) {
+unsigned long long *l1,*l2;
+
+    l1 = (unsigned long long *) e1;	// 8 bytes
+    l2 = (unsigned long long *) e2;	// 8 bytes
+    if ((l1[0] == l2[0]) && (l1[1] == l2[1]) && (e1->h[16]==e2->h[16]) && (e1->h[17]==e2->h[17])) {
+	return (TRUE);
+    }
+    return (FALSE);
+}
+*/
+
+
+int get_entry_pos (struct entries *en,struct entry *ei) {
+int t,b,m,s;
+unsigned long v,vm;
+
+    v = get_value_entry(ei);
+    t = -1;
+    b = en->num;
+    while ((b-t)>1) {
+        m = t+((b-t)/2);
+        vm = get_value_entry(&en->e[m]);
+        if (vm > v) {
+                b = m;
+        }
+        else if (vm < v) {
+                t = m;
+        }
+        else {
+                // match
+                return (m);
+        }
+    }
+    return (b);
+}
+
+/*
+int find_tail_entries_old (char *tail,struct entries *en) {
 int n;
 struct entry ei;
 
@@ -195,6 +268,103 @@ struct entry ei;
 	}
     }
     return (FALSE);
+}
+*/
+
+int find_tail_entries (struct entry *tail,struct entries *en) {
+int t,b,m,s;
+struct entry *ei;
+unsigned long v,vm;
+
+    //tail_to_entry(tail,&ei);
+    ei = tail;
+    v = get_value_entry(ei);
+    t = -1;
+    b = en->num;
+    while ((b-t)>1) {
+	m = t+((b-t)/2);
+	vm = get_value_entry(&en->e[m]);
+	if (vm > v) {
+		b = m;
+	}
+	else if (vm < v) {
+		t = m;
+	}
+	else {
+		// match?
+		s = m;
+		do {
+			if (cmp_entry(ei,&en->e[s])) {
+				return (TRUE);
+			}
+			s++;
+		}
+		while ((s<b) && (v==get_value_entry(&en->e[s])));
+		s = m-1;
+		while ((s>t) && (v==get_value_entry(&en->e[s]))) {
+			if (cmp_entry(ei,&en->e[s])) {
+				/*
+				if (!find_tail_entries_old(tail,en)) {
+					panic("find_tail_entries mismatch (TRUE)\n");
+				}
+				*/
+				return (TRUE);
+			}
+			s--;
+		}
+		break;
+	}
+    }
+    /*
+    if (find_tail_entries_old(tail,en)) {
+	panic("find_tail_entries mismatch (FALSE)\n");
+    }
+    */
+    return (FALSE);
+}
+
+/*
+void sort_last_entry (struct entries *en) {
+int n;
+long vt,vb;
+struct entry t,b;
+
+    for (n=en->num-1;n>0;n--) {
+	t = en->e[n-1];
+	b = en->e[n];
+	vt = get_value_entry(t);
+	vb = get_value_entry(b);
+	if (vb < vt) {
+		en->e[n] = t;
+		en->e[n-1] = b;
+	}
+	else break;
+    }
+}
+*/
+
+char mem[MEM_INSERT];
+
+void insert_entry (struct entries *en,struct entry *ei) {
+int p,n,s;
+
+    if (!en->num) {
+	en->e[en->num++] = *ei;
+    }
+    else {
+	p = get_entry_pos (en,ei);
+	if (p == en->num) {
+		en->e[en->num++] = *ei;
+	}
+	else {
+		n = en->num-p;
+		s = n*sizeof(struct entry);
+		memcpy(mem,&en->e[p],s);
+		en->e[p] = *ei;
+		memcpy(&en->e[p+1],mem,s);
+		en->num++;
+	}
+    }
 }
 
 struct entries *txt_to_entries(char *txt,int len) {
@@ -209,28 +379,39 @@ struct entry ei;
 	p[0] = 0;
 	//printf("%s\n",t);
 	tail_to_entry(t,&ei);
+	//print_entry(&ei);
 	t = p+2;
+	/*
 	en->e[en->num++] = ei;
+	sort_last_entry(en);
+	*/
+	insert_entry(en,&ei);
     }
     en = realloc(en,sizeof(struct entries)+(sizeof(struct entry)*(en->num-1)));
     return (en);
 }
 
-int head_to_index(char *head) {
+/*
+static inline int head_to_index(char *head) {
 int n;
 
-    n = (int)strtol(head, NULL, 16);
+    //n = (int)strtol(head, NULL, 16);
     //printf("head: '%s' = %i\n",head,n);
+    n = ((int) hex_to_num(head[0])) << 16;
+    n += ((int) hex_to_num(head[1])) << 12;
+    n += ((int) hex_to_num(head[2])) << 8;
+    n += ((int) hex_to_num(head[3])) << 4;
+    n += (int) hex_to_num(head[4]);
     return (n);
 }
+*/
 
-int add_cache_entries (char *head,struct entries *e) {
-int n;
-
+int add_cache_entries (int head,struct entries *e) {
+//int n;
     if (memory < max_memory) {
-    	n = head_to_index(head);
-    	if (idx.i[n] == NULL) {
-		idx.i[n] = e;
+    	//n = head_to_index(head);
+    	if (idx.i[head] == NULL) {
+		idx.i[head] = e;
 		memory += sizeof(struct entries)+(sizeof(struct entry)*(e->num-1));
         	return (TRUE);
     	}
@@ -239,11 +420,13 @@ int n;
     return (FALSE);
 }
 
-struct entries *get_entries_cache (char *head) {
+static inline struct entries *get_entries_cache (int head) {
+/*
 int n;
 
     n = head_to_index(head);
-    return (idx.i[n]);
+*/
+    return (idx.i[head]);
 }
 
 #ifdef USE_OPENSSL
@@ -273,14 +456,17 @@ char tmp[MAX_STR];
     }
 }
 
-struct entries *get_entries_disk (char *head) {
+struct entries *get_entries_disk (int head) {
 struct entries *e;
 char buffer[MAX_STR];
+char s_head[MIN_STR];
 long l,ll;
 char *p;
 FILE *f;
 
-    sprintf (buffer,BASE,getenv("HOME"),head);
+    sprintf(s_head,"%05X",head);
+    sprintf (buffer,BASE,getenv("HOME"),s_head);
+    //printf("file: %s\n",buffer);
     f = fopen(buffer, "r");
     if (f != NULL) {
         fseek(f,0L,SEEK_END);
@@ -291,6 +477,9 @@ FILE *f;
         if (l != ll) {
                 panic("Error: fread");
         }
+	if (ll > MEM_INSERT) {
+		panic("Error: MEM_INSERT");
+	}
 	fclose(f);
         // add '0d0a00' at the end
         p[l] = '\r';
@@ -298,6 +487,7 @@ FILE *f;
         p[l+2] = 0;
         e = txt_to_entries(p,l);
         free(p);
+        //print_entries(e);
         //printf("%li\n",l);
     }
     else {
@@ -309,7 +499,7 @@ FILE *f;
 
 long long fill_cache (void) {
 int n = 0;
-char head[MIN_STR];
+//char head[MIN_STR];
 struct entries *e;
 long long count = 0L;
 
@@ -317,21 +507,21 @@ long long count = 0L;
     printf("Caching hashes ...\n");
     for (n=0;n<ENTRIES;n++) {
         if (memory >= max_memory) {
-		printf("fill_cache: memory full\n");
+		printf("\nfill_cache: memory full\n");
 		break;
 	}
-        sprintf(head,"%05X",n);
+        //sprintf(head,"%05X",n);
 	//printf("try head %s\n",head);
 	//printf("Memory: %lliM\n",memory/(1024L*1024L));
-	e = get_entries_disk(head);
+	e = get_entries_disk(n);
 	if (e == NULL) {
 		panic("fill_cache get_entries_disk.");
 	}
-        if (!add_cache_entries (head,e)) {
+        if (!add_cache_entries (n,e)) {
 		panic("fill_cache add_cache_entries.");
 	}
 	count += e->num;
-	printf("Head: %s Memory: %lliM Passwords: %lli\r",head,memory/(1024L*1024L),count);
+	printf("Head: %05X Memory: %lliM Passwords: %lli\r",n,memory/(1024L*1024L),count);
 	fflush(stdout);
 	//printf("head %s in cache\n",head);
     }
@@ -339,40 +529,64 @@ long long count = 0L;
     return(count);
 }
 
+int hash_to_index (char *hash) {
+int n;
+
+    n = (((int)hash[0]) & 0xf0) << 12;
+    n += (((int)hash[0]) & 0x0f) << 12;
+    n += (((int)hash[1]) & 0xf0) << 4;
+    n += (((int)hash[1]) & 0x0f) << 4;
+    n += (((int)hash[2]) & 0xf0) >> 4;
+    return (n);
+}
+
+static inline void hash_to_tail (char *hash,struct entry *e)  {
+    *e = *((struct entry *) (&hash[2]));
+    e->h[0] &= 0x0f;
+}
 
 int checkpass (char *pass,char *res) {
 unsigned char hash[SHA1_LEN];
 char buffer[MAX_STR];
-char head[MIN_STR];
-char tail[MIN_STR];
+//char head[MIN_STR];
+//char tail[MIN_STR];
+struct entry tail;
 FILE *f;
 long l,ll;
 char *p;
 struct entries *e;
 int lcache;
 int lret = FALSE;
+int n_head;
 
+    //printf("pass: %s\n",pass);
     sha1(pass,hash);
-    sha1_to_string (hash,buffer);
-    //printf ("%s\n",buffer);
-    strcpy(head,buffer);
-    head[5] = 0;
-    strcpy(tail,buffer+5);
+    //sha1_to_string (hash,buffer);
+    //printf("%s\n",buffer);
+    n_head = hash_to_index (hash);
+    //printf("head: %05X\n",n_head);
+    //strcpy(head,buffer);
+    //head[5] = 0;
+    //strcpy(tail,buffer+5);
+    hash_to_tail (hash,&tail);
+    //print_entry(&tail);
     lcache = FALSE;
-    e = get_entries_cache (head);
+    //n_head = head_to_index(head);
+    e = get_entries_cache (n_head);
     if (e == NULL) {
-    	e = get_entries_disk (head);
+    	e = get_entries_disk (n_head);
     }
     else {
 	lcache = TRUE;
 	//printf("Head %s cached.\n",head);
     }
-    if (find_tail_entries(tail,e)) {
-	strcpy (res,tail);
+    //print_entries(e);
+    if (find_tail_entries(&tail,e)) {
+	strcpy (res,"<deprecated>");
 	lret = TRUE;
     }
     if (!lcache) {
-	add_cache_entries (head,e);
+	add_cache_entries (n_head,e);
     }
     return (lret);
 }
@@ -381,6 +595,8 @@ FILE *open_append(void) {
 FILE *f;
 
     recovered = 0;
+    d_recovered = 0;
+    gettimeofday(&oldtime,NULL);
     if (!llog) return (NULL);
     remove(LOG);
     f = fopen(LOG, "a");
@@ -392,17 +608,29 @@ FILE *f;
 
 pthread_mutex_t mutex_append = PTHREAD_MUTEX_INITIALIZER;
 
-void write_append(FILE *f,char *p) {
+void write_append(FILE *f,char *p,int deep) {
+struct timeval newtime;
+long long n,o;
+
     pthread_mutex_lock (&mutex_append);
     recovered++;
+    if (deep) {
+	d_recovered++;
+    }
     if (llog) {
-	printf("Passwords recovered: %lli\r",recovered);
-	fflush(stdout);
+	gettimeofday(&newtime,NULL);
+	o = (oldtime.tv_sec*1000L)+(oldtime.tv_usec)/1000L;
+	n = (newtime.tv_sec*1000L)+(newtime.tv_usec)/1000L;
+	if ((n-o) >= DISPLAY_MS) {
+		oldtime = newtime;
+		printf("Passwords recovered: %lli deep:%lli\r",recovered,d_recovered);
+		fflush(stdout);
+	}
     	fwrite (p,1,strlen(p),f);
     	fwrite ("\n",1,1,f);
     }
     else {
-	printf("%s\n",p);
+	printf("%s p:%lli d:%lli\n",p,recovered,d_recovered);
     }
     pthread_mutex_unlock (&mutex_append);
 }
@@ -412,16 +640,19 @@ void close_append(FILE *f) {
     fclose(f);
 }
 
-void checkword (FILE *f,char *w,int deep) {
+void checkword (FILE *f,char *w,int deep,int predeep) {
 int i;
 char *a = ALPHA;
+char *m = ALPHA_MIN;
 char c[2];
 char p[MAX_STR];
 char res[MAX_STR];
 
+    /*
     if (deep_min && deep && (strlen(w)>=FORCE_DEEP)) {
 	a = ALPHA_MIN;
     }
+    */
     //printf("a = '%s'\n",a);
     c[1] = 0;
     for (i=0;i<strlen(a);i++) {
@@ -431,11 +662,12 @@ char res[MAX_STR];
 	if (checkpass(p,res)) {
 		//printf("%s\n",p);
 		//appendpass(p);
-		write_append(f,p);
-		checkword(f,p,0);
+		write_append(f,p,predeep);
+		checkword(f,p,0,predeep);
 	}
-	else if ((deep < max_deep) || (strlen(p)<FORCE_DEEP)) {
-		checkword(f,p,deep+1);
+	else if (((deep < max_deep) && (!deep_min || (strchr(m,*c)!=NULL)))|| (strlen(p)<FORCE_DEEP)) {
+		//printf("'%s' deep char: %s\n",w,c);
+		checkword(f,p,deep+1,predeep|(strlen(p)>=FORCE_DEEP));
 	}
     }
 }
@@ -470,19 +702,20 @@ struct cw_params {
     FILE *f;
     char w[MAX_STR];
     int deep;
+    int predeep;
 };
 
 void *checkword_function (void *ptr) {
 struct cw_params *p;
 
     p = (struct cw_params *) ptr;
-    checkword (p->f,p->w,p->deep);
+    checkword (p->f,p->w,p->deep,p->predeep);
     //printf("exit thread '%s' (%i-1)\n",p->w,get_threads());
     dec_threads();
     free(p);
 }
 
-void launch_checkword (FILE *f,char *w,int deep) {
+void launch_checkword (FILE *f,char *w,int deep,int predeep) {
 pthread_t thread;
 struct cw_params *p;
 
@@ -491,6 +724,7 @@ struct cw_params *p;
     p->f = f;
     strcpy (p->w,w);
     p->deep = deep;
+    p->predeep = predeep;
     inc_threads();
     pthread_create( &thread, NULL, checkword_function, (void*) p);
 }
@@ -510,7 +744,7 @@ void end_threads (void) {
 }
 
 
-void checkword_mt (FILE *f,char *w,int deep) {
+void checkword_mt (FILE *f,char *w) {
 int i;
 char a[] = ALPHA;
 char c[2];
@@ -526,13 +760,13 @@ char res[MAX_STR];
         strcat (p,c);
         if (checkpass(p,res)) {
                 //printf("checkword_mt launch '%s'\n",p);
-                write_append(f,p);
+                write_append(f,p,0);
 		wait_threads();
-                launch_checkword(f,p,0);
+                launch_checkword(f,p,0,FALSE);
         }
-        else if ((deep < max_deep) || (strlen(p)<FORCE_DEEP)) {
+        else if (strlen(p)<FORCE_DEEP) {
 		wait_threads();
-                launch_checkword(f,p,deep+1);
+                launch_checkword(f,p,1,FALSE);
         }
     }
     end_threads();
@@ -598,7 +832,7 @@ char root[MAX_STR];
     printf("passwords in cache: %lli\n",c);
 #endif
     f = open_append();
-    checkword_mt(f,root,0);
+    checkword_mt(f,root);
     close_append(f);
     return (0);
 }

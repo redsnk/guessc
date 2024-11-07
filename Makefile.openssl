@@ -1,2 +1,2 @@
 guessc: guess.c
-	cc guess.c -DUSE_OPENSSL -lpthread -lcrypto -o guessc
+	cc guess.c -Ofast -DUSE_OPENSSL -lpthread -lcrypto -o guessc
