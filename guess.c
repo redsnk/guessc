@@ -10,8 +10,8 @@
 #include <openssl/evp.h>
 #endif
 
-#define MY_VERSION	"v0.6"
-#define TRUE		(1)
+#define MY_VERSION	"v0.7"
+#define TRUE		(-1)
 #define FALSE		(0)
 #define MAX_STR		(1024)
 #define MIN_STR		(64)
@@ -20,14 +20,15 @@
 #define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz0123456789"
 #define MAX_DEEP	0
 #define SHA1_LEN	20
-#define TAIL_BYTES	16		// 18-2
+#define TAIL_BYTES	8		// max 18 bytes, 60 bits is enough to avoid collisions, much less memory and a little faster.
 #define LOG		"guessc.txt"
-#define MAX_MEMORY 	(1024L*1024L*1024L*14L)
+#define MAX_MEMORY 	(1024L*1024L*1024L*8L)
 #define FORCE_DEEP	4
 #define MAX_THREADS	4
 #define MEM_INSERT	(1024*1024*10)
 #define PRECACHE
 #define DISPLAY_MS	500
+#define THREADS_CACHE	32
 
 long long max_memory = MAX_MEMORY;
 int llog = TRUE;
@@ -109,8 +110,47 @@ struct index {
 	struct entries *i[ENTRIES];
 };
 
+struct info_cache_entry {
+	unsigned char free;
+	pthread_t thread;
+	unsigned char join;
+};
+
+//unsigned char free_cache[THREADS_CACHE];
+
+struct info_cache_entry info_cache[THREADS_CACHE];
+
 struct index idx;
-unsigned long long memory = 0;
+
+
+pthread_mutex_t mutex_memory_counter = PTHREAD_MUTEX_INITIALIZER;
+unsigned long long memory = 0L;
+long long count = 0L;
+
+void set_memory_counter(unsigned long long n,long long c) {
+    pthread_mutex_lock (&mutex_memory_counter);
+    memory = n;
+    count = c;
+    pthread_mutex_unlock (&mutex_memory_counter);
+}
+
+unsigned long long get_memory_counter() {
+unsigned long long n;
+
+    pthread_mutex_lock (&mutex_memory_counter);
+    n = memory;
+    pthread_mutex_unlock (&mutex_memory_counter);
+    return(n);
+}
+
+void add_memory_counter(unsigned long long n, long long c) {
+    pthread_mutex_lock (&mutex_memory_counter);
+    memory += n;
+    count += c;
+    printf("Memory: %lliM Passwords: %lli\r",memory/(1024L*1024L),count);
+    fflush(stdout);
+    pthread_mutex_unlock (&mutex_memory_counter);
+}
 
 void panic(char *txt) {
     printf("PANIC: %s\n",txt);
@@ -122,6 +162,10 @@ int n;
 
     for (n=0;n<ENTRIES;n++) {
 	idx.i[n] = NULL;
+    }
+    for (n=0;n<THREADS_CACHE;n++) {
+	info_cache[n].free = TRUE;
+	info_cache[n].join = FALSE;
     }
 }
 
@@ -217,21 +261,6 @@ int n;
     return (TRUE);
 }
 
-
-/*
-static inline int cmp_entry (struct entry *e1,struct entry *e2) {
-unsigned long long *l1,*l2;
-
-    l1 = (unsigned long long *) e1;	// 8 bytes
-    l2 = (unsigned long long *) e2;	// 8 bytes
-    if ((l1[0] == l2[0]) && (l1[1] == l2[1]) && (e1->h[16]==e2->h[16]) && (e1->h[17]==e2->h[17])) {
-	return (TRUE);
-    }
-    return (FALSE);
-}
-*/
-
-
 int get_entry_pos (struct entries *en,struct entry *ei) {
 int t,b,m,s;
 unsigned long v,vm;
@@ -256,27 +285,11 @@ unsigned long v,vm;
     return (b);
 }
 
-/*
-int find_tail_entries_old (char *tail,struct entries *en) {
-int n;
-struct entry ei;
-
-    tail_to_entry(tail,&ei);
-    for (n=0;n<en->num;n++) {
-	if (cmp_entry(ei,en->e[n])) {
-		return (TRUE);
-	}
-    }
-    return (FALSE);
-}
-*/
-
 int find_tail_entries (struct entry *tail,struct entries *en) {
 int t,b,m,s;
 struct entry *ei;
 unsigned long v,vm;
 
-    //tail_to_entry(tail,&ei);
     ei = tail;
     v = get_value_entry(ei);
     t = -1;
@@ -292,6 +305,7 @@ unsigned long v,vm;
 	}
 	else {
 		// match?
+		if (TAIL_BYTES == 8) return (TRUE);	// length value == TAIL_BYTES
 		s = m;
 		do {
 			if (cmp_entry(ei,&en->e[s])) {
@@ -303,11 +317,6 @@ unsigned long v,vm;
 		s = m-1;
 		while ((s>t) && (v==get_value_entry(&en->e[s]))) {
 			if (cmp_entry(ei,&en->e[s])) {
-				/*
-				if (!find_tail_entries_old(tail,en)) {
-					panic("find_tail_entries mismatch (TRUE)\n");
-				}
-				*/
 				return (TRUE);
 			}
 			s--;
@@ -315,37 +324,12 @@ unsigned long v,vm;
 		break;
 	}
     }
-    /*
-    if (find_tail_entries_old(tail,en)) {
-	panic("find_tail_entries mismatch (FALSE)\n");
-    }
-    */
     return (FALSE);
 }
 
-/*
-void sort_last_entry (struct entries *en) {
-int n;
-long vt,vb;
-struct entry t,b;
+char mem[THREADS_CACHE][MEM_INSERT];
 
-    for (n=en->num-1;n>0;n--) {
-	t = en->e[n-1];
-	b = en->e[n];
-	vt = get_value_entry(t);
-	vb = get_value_entry(b);
-	if (vb < vt) {
-		en->e[n] = t;
-		en->e[n-1] = b;
-	}
-	else break;
-    }
-}
-*/
-
-char mem[MEM_INSERT];
-
-void insert_entry (struct entries *en,struct entry *ei) {
+void insert_entry (struct entries *en,struct entry *ei,int num_thread) {
 int p,n,s;
 
     if (!en->num) {
@@ -359,15 +343,15 @@ int p,n,s;
 	else {
 		n = en->num-p;
 		s = n*sizeof(struct entry);
-		memcpy(mem,&en->e[p],s);
+		memcpy(mem[num_thread],&en->e[p],s);
 		en->e[p] = *ei;
-		memcpy(&en->e[p+1],mem,s);
+		memcpy(&en->e[p+1],mem[num_thread],s);
 		en->num++;
 	}
     }
 }
 
-struct entries *txt_to_entries(char *txt,int len) {
+struct entries *txt_to_entries(char *txt,int len,int num_thread) {
 struct entries *en;
 char *p,*t;
 struct entry ei;
@@ -385,34 +369,23 @@ struct entry ei;
 	en->e[en->num++] = ei;
 	sort_last_entry(en);
 	*/
-	insert_entry(en,&ei);
+	insert_entry(en,&ei,num_thread);
     }
     en = realloc(en,sizeof(struct entries)+(sizeof(struct entry)*(en->num-1)));
     return (en);
 }
 
-/*
-static inline int head_to_index(char *head) {
-int n;
-
-    //n = (int)strtol(head, NULL, 16);
-    //printf("head: '%s' = %i\n",head,n);
-    n = ((int) hex_to_num(head[0])) << 16;
-    n += ((int) hex_to_num(head[1])) << 12;
-    n += ((int) hex_to_num(head[2])) << 8;
-    n += ((int) hex_to_num(head[3])) << 4;
-    n += (int) hex_to_num(head[4]);
-    return (n);
-}
-*/
-
 int add_cache_entries (int head,struct entries *e) {
 //int n;
-    if (memory < max_memory) {
+unsigned long long m;
+
+    m = get_memory_counter();
+    if (m < max_memory) {
     	//n = head_to_index(head);
     	if (idx.i[head] == NULL) {
 		idx.i[head] = e;
-		memory += sizeof(struct entries)+(sizeof(struct entry)*(e->num-1));
+		//memory += sizeof(struct entries)+(sizeof(struct entry)*(e->num-1));
+		add_memory_counter(sizeof(struct entries)+(sizeof(struct entry)*(e->num-1)),e->num);
         	return (TRUE);
     	}
     }
@@ -456,7 +429,7 @@ char tmp[MAX_STR];
     }
 }
 
-struct entries *get_entries_disk (int head) {
+struct entries *get_entries_disk (int head,int num_thread) {
 struct entries *e;
 char buffer[MAX_STR];
 char s_head[MIN_STR];
@@ -485,7 +458,7 @@ FILE *f;
         p[l] = '\r';
         p[l+1] = '\n';
         p[l+2] = 0;
-        e = txt_to_entries(p,l);
+        e = txt_to_entries(p,l,num_thread);
         free(p);
         //print_entries(e);
         //printf("%li\n",l);
@@ -497,6 +470,154 @@ FILE *f;
     return (e);
 }
 
+pthread_mutex_t mutex_cache = PTHREAD_MUTEX_INITIALIZER;
+
+//pthread_t c_threads[THREADS_CACHE];
+
+int acquire_thread_cache(void) {
+int n;
+
+    pthread_mutex_lock (&mutex_cache);
+    for (n=0;n<THREADS_CACHE;n++) {
+	if (info_cache[n].free && !info_cache[n].join) {
+		info_cache[n].free = FALSE;
+		//printf("lock %i\n",n);
+		break;
+	}
+    }
+    pthread_mutex_unlock (&mutex_cache);
+    if (n<THREADS_CACHE) {
+	return (n);
+    }
+    return (-1);
+}
+
+void free_thread_cache (int n) {
+    //printf("pre-unlock %i\n",n);
+    pthread_mutex_lock (&mutex_cache);
+    info_cache[n].free = TRUE;
+    info_cache[n].join = TRUE;
+    //printf("unlock %i\n",n);
+    pthread_mutex_unlock (&mutex_cache);
+}
+
+int get_threads_cache_busy(void) {
+int n,c;
+
+    c = 0;
+    pthread_mutex_lock (&mutex_cache);
+    for (n=0;n<THREADS_CACHE;n++) {
+        if (!info_cache[n].free) {
+		c++;
+        }
+    }
+    pthread_mutex_unlock (&mutex_cache);
+    return (c);
+}
+
+int get_next_join_cache (int *num,pthread_t *thread) {
+int n;
+
+    pthread_mutex_lock (&mutex_cache);
+    for (n=0;n<THREADS_CACHE;n++) {
+	if (info_cache[n].join) {
+		*thread = info_cache[n].thread;
+		*num = n;
+		info_cache[n].join = FALSE;
+		break;
+	}
+    }
+    pthread_mutex_unlock (&mutex_cache);
+    return (n<THREADS_CACHE);
+}
+
+void dispatch_joins_cache (void) {
+pthread_t thread;
+int num;
+
+    while (get_next_join_cache(&num,&thread)) {
+        //printf("pthread_join start %i\n",num);
+        pthread_join(thread,NULL);
+        //printf("pthread_join ends %i\n",num);
+    }
+}
+
+
+int wait_get_thread_cache (void) {
+int n;
+/*
+struct timeval t1,t2;
+
+    gettimeofday(&t1,NULL);
+*/
+    do {
+        n = acquire_thread_cache();
+        if (n == -1) {
+                usleep(1000*100);
+        }
+	/*
+	gettimeofday(&t2,NULL);
+	if ((t2.tv_sec-t1.tv_sec) > 5) {
+		printf("\nbusy %i\n",get_threads_cache_busy());
+		panic("dead lock!");
+	}
+	*/
+	dispatch_joins_cache();
+    }
+    while (n == -1);
+    return (n);
+}
+
+void wait_cache_threads_busy (void) {
+    while (get_threads_cache_busy() > 0) {
+        usleep(1000*100);
+    }
+    sleep(1);
+}
+
+struct cache_params {
+    int head;
+    int num_thread;
+};
+
+void fill_cache_head (int num_thread, int head) {
+struct entries *e;
+
+    e = get_entries_disk (head,num_thread);
+    if (e == NULL) {
+	   panic("fill_cache get_entries_disk.");
+    }
+    if (!add_cache_entries (head,e)) {
+	   // No more memory
+           //panic("fill_cache add_cache_entries.");
+    }
+}
+
+void *get_entries_function (void *ptr) {
+struct cache_params *p;
+
+    p = (struct cache_params *) ptr;
+    //printf("start cache head %05X %i\n",p->head,p->num_thread);
+    fill_cache_head (p->num_thread,p->head);
+    //printf("end cache head %05X %i\n",p->head,p->num_thread);
+    free_thread_cache(p->num_thread);
+    //printf("released %05X %i\n",p->head,p->num_thread);
+    free(p);
+}
+
+void launch_get_entries (int num_thread,int head) {
+//pthread_t thread;
+struct cache_params *p;
+
+    p = malloc(sizeof(struct cache_params));
+    p->head = head;
+    p->num_thread = num_thread;
+    //printf("launch head: %i %05X\n",p->num_thread,p->head);
+    pthread_create(&info_cache[num_thread].thread, NULL, get_entries_function, (void*) p);
+    //printf("launched head: %i %05X\n",p->num_thread,p->head);
+}
+
+/*
 long long fill_cache (void) {
 int n = 0;
 //char head[MIN_STR];
@@ -528,6 +649,33 @@ long long count = 0L;
     printf("\nDone.\n");
     return(count);
 }
+*/
+
+long long fill_cache (void) {
+int n = 0,t;
+//char head[MIN_STR];
+struct entries *e;
+//long long count = 0L;
+unsigned long long m;
+
+    //memory = 0;
+    set_memory_counter(0L,0L);
+    printf("Caching hashes ...\n");
+    for (n=0;n<ENTRIES;n++) {
+	m = get_memory_counter();
+        if (m >= max_memory) {
+		printf("\nfill_cache: memory full\n");
+                break;
+        }
+	//printf("busy: %i\n",get_threads_cache_busy());
+	t = wait_get_thread_cache();
+	launch_get_entries(t,n);
+    }
+    wait_cache_threads_busy();
+    printf("\nDone.\n");
+    return(count);
+}
+
 
 int hash_to_index (char *hash) {
 int n;
@@ -545,13 +693,13 @@ static inline void hash_to_tail (char *hash,struct entry *e)  {
     e->h[0] &= 0x0f;
 }
 
-int checkpass (char *pass,char *res) {
+int checkpass (char *pass) {
 unsigned char hash[SHA1_LEN];
-char buffer[MAX_STR];
+//char buffer[MAX_STR];
 //char head[MIN_STR];
 //char tail[MIN_STR];
 struct entry tail;
-FILE *f;
+//FILE *f;
 long l,ll;
 char *p;
 struct entries *e;
@@ -574,7 +722,7 @@ int n_head;
     //n_head = head_to_index(head);
     e = get_entries_cache (n_head);
     if (e == NULL) {
-    	e = get_entries_disk (n_head);
+    	e = get_entries_disk (n_head,0);
     }
     else {
 	lcache = TRUE;
@@ -582,7 +730,7 @@ int n_head;
     }
     //print_entries(e);
     if (find_tail_entries(&tail,e)) {
-	strcpy (res,"<deprecated>");
+	//strcpy (res,"<deprecated>");
 	lret = TRUE;
     }
     if (!lcache) {
@@ -659,7 +807,7 @@ char res[MAX_STR];
 	c[0] =a[i];
 	strcpy (p,w);
 	strcat (p,c);
-	if (checkpass(p,res)) {
+	if (checkpass(p)) {
 		//printf("%s\n",p);
 		//appendpass(p);
 		write_append(f,p,predeep);
@@ -758,7 +906,7 @@ char res[MAX_STR];
 	//printf("checkword_mt c='%s'\n",c);
         strcpy (p,w);
         strcat (p,c);
-        if (checkpass(p,res)) {
+        if (checkpass(p)) {
                 //printf("checkword_mt launch '%s'\n",p);
                 write_append(f,p,0);
 		wait_threads();
@@ -781,7 +929,7 @@ Guessc ("MY_VERSION") programed by Alex Bassas.\n\
 usage: guessc [-c<num>][-n][-d<num>][-m][-t<num>] \"<root>\"\n\
 \n\
 \"<root>\"      => Root string to search, \"\" for all passwords\n\
--c<num>       => Cache size in Gb (default 14)\n\
+-c<num>       => Cache size in Gb (default 8)\n\
 -n            => Don't save the password to '"LOG"', print it\n\
 -d<num>       => Max deep (default 0)\n\
 -m            => Use min alphabet on deep>0\n\
