@@ -75,11 +75,11 @@ make
 ```
 Execute with the parameters you need.
 
-Guessc needs **14G** of free memory to load all the hashes, if you have it, execute:
+Guessc needs **8G** of free memory to load all the hashes, if you have it, execute:
 ```
 ./guessc ""
 ```
-Be patient, it will take some time to load all the hashes into the memory (40 min. aprox.)
+Be patient, it will take some time to load all the hashes into the memory.
 
 Passwords discovered will be saved on **guessc.txt** file.
 
