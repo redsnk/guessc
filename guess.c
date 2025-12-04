@@ -10,14 +10,38 @@
 #include <openssl/evp.h>
 #endif
 
-#define MY_VERSION	"v0.7"
+#define MY_VERSION	"v0.8.10"
 #define TRUE		(-1)
 #define FALSE		(0)
 #define MAX_STR		(1024)
 #define MIN_STR		(64)
 #define BASE 		"%s/src/pwnedpasswords/%s"
-#define ALPHA		"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"·$%&/()='?¡¿<>,;.:-_+* |@#~[]^\\"
-#define ALPHA_MIN	"abcdefghijklmnopqrstuvwxyz0123456789"
+#define DAT		"guessc.dat"
+#define ALPHA_CYR	"абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+#define ALPHA_CYR_U     "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+#define ALPHA_NUM	"0123456789"
+#define ALPHA_O		"abcdefghijklmnopqrstuvwxyz"
+#define ALPHA_O_U	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+#define ALPHA_JAP	"ーぁあぃいぅうぇえぉおかがきぎくぐけげこごさざしじすずせぜそぞただちぢっつづてでとどなにぬねのはばぱひびぴふぶぷへべぺほぼぽまみむめもゃやゅゆょよらりるれろゎわゐゑをんァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロヮワヰヱヲンヴヵヶ゛゜"
+
+/*
+21 '!': 5186174
+5F '_': 4407325
+2E '.': 4244572
+40 '@': 2259857
+2D '-': 1731582
+2A '*': 1126043
+24 '$': 1010491
+23 '#': 734762
+3F '?': 599336
+26 '&': 311694
+*/
+#define ALPHA_SYM_T	"!_.@-*$#?&"
+#define ALPHA_SYM	"\"%/()='\xa1\xbf<>,;:+ |\xb7~[]^\\"
+//#define ALPHA_MIN	ALPHA_N""ALPHA_CYR""ALPHA_NUM
+#define ALPHA_ALL       ALPHA_O""ALPHA_CYR""ALPHA_NUM""ALPHA_O_U""ALPHA_CYR_U""ALPHA_JAP""ALPHA_SYM_T""ALPHA_SYM
+//#define ALPHA_O_CYR	ALPHA_CYR""ALPHA_NUM""ALPHA_CYR_U""ALPHA_SYM
+//#define ALPHA_M_O_CYR	ALPHA_CYR""ALPHA_NUM
 #define MAX_DEEP	0
 #define SHA1_LEN	20
 #define TAIL_BYTES	8		// max 18 bytes, 60 bits is enough to avoid collisions, much less memory and a little faster.
@@ -26,18 +50,121 @@
 #define FORCE_DEEP	4
 #define MAX_THREADS	4
 #define MEM_INSERT	(1024*1024*10)
-#define PRECACHE
 #define DISPLAY_MS	500
 #define THREADS_CACHE	32
 
 long long max_memory = MAX_MEMORY;
 int llog = TRUE;
 int max_deep = MAX_DEEP;
-int deep_min = FALSE;
 int max_threads = MAX_THREADS;
 long long recovered = 0;
 long long d_recovered = 0;
 struct timeval oldtime;
+int only_cyr = FALSE;
+char p_alpha_top[MAX_STR]="";
+char p_alpha[MAX_STR]="";
+char p_alpha_d[MAX_STR]="";
+int lstats = FALSE;
+int lnodat = FALSE;
+
+char alpha_top[MAX_STR];
+char alpha[MAX_STR];
+char alpha_d[MAX_STR];
+
+void set_alpha (char *buffer,char *pattern,char *def) {
+int n;
+
+    if (strlen(pattern) == 0) {
+	// default
+	strcpy(buffer,def);
+    }
+    else {
+    	buffer[0] = 0;
+    	for (n=0;n<strlen(pattern);n++) {
+		switch (pattern[n]) {
+			case 'o':
+				strcat(buffer,ALPHA_O);
+				break;
+                       	case 'O':
+                                strcat(buffer,ALPHA_O_U);
+                                break;
+			case 'c':
+				strcat(buffer,ALPHA_CYR);
+				break;
+                        case 'C':
+                                strcat(buffer,ALPHA_CYR_U);
+                                break;
+                        case 'n':
+                                strcat(buffer,ALPHA_NUM);
+                                break;
+                        case 'S':
+                                strcat(buffer,ALPHA_SYM_T);
+                                break;
+                        case 's':
+                                strcat(buffer,ALPHA_SYM);
+                                break;
+			case 'j':
+				strcat(buffer,ALPHA_JAP);
+				break;
+		}
+	}
+    }
+}
+
+int get_utf8_len (char c) {
+    if ((c & 0x80) == 0x00) return (1);
+    if ((c & 0xe0) == 0xc0) return (2);
+    if ((c & 0xf0) == 0xe0) return (3);
+    if ((c & 0xf8) == 0xf0) return (4);
+    // fail
+    return (1);
+}
+
+int get_char_utf8(int pos,char *s,char *d) {
+int n,c,l,m;
+
+    for (n=0,c=0;n<strlen(s);n++) {
+	l = get_utf8_len(s[n]);
+	if (pos == c) {
+		for (m=0;m<l;m++) {
+			d[m] = s[n+m];
+		}
+		d[m] = 0;
+		return(TRUE);
+	}
+	n += l-1;
+	c++;
+    }
+    return (FALSE);
+}
+
+int strlen_utf8 (char *s) {
+int n,c,l;
+
+    for (n=0,c=0;n<strlen(s);n++) {
+	l = get_utf8_len(s[n]);
+	n += l-1;
+        c++;
+    }
+    return (c);
+}
+
+char *strchr_utf8 (char *s,char *p) {
+int n,l,m;
+
+    for (n=0;n<strlen(s);n++) {
+	l = get_utf8_len(s[n]);
+	for (m=0;m<l;m++) {
+		if (s[n+m] != p[m]) break;
+	}
+	if (m == l) {
+		return (&s[n]);
+	}
+	n += l-1;
+    }
+    return (NULL);
+
+}
 
 #ifndef USE_OPENSSL
 // https://www.nayuki.io/page/fast-sha1-hash-implementation-in-x86-assembly
@@ -329,6 +456,9 @@ unsigned long v,vm;
 
 char mem[THREADS_CACHE][MEM_INSERT];
 
+#define SIZE_ENTRIES(e) (sizeof(struct entries)+(sizeof(struct entry)*(e->num-1)))
+
+
 void insert_entry (struct entries *en,struct entry *ei,int num_thread) {
 int p,n,s;
 
@@ -352,9 +482,10 @@ int p,n,s;
 }
 
 struct entries *txt_to_entries(char *txt,int len,int num_thread) {
-struct entries *en;
+struct entries *en,*sa;
 char *p,*t;
 struct entry ei;
+int l;
 
     en = malloc(len);
     en->num = 0;
@@ -371,7 +502,12 @@ struct entry ei;
 	*/
 	insert_entry(en,&ei,num_thread);
     }
-    en = realloc(en,sizeof(struct entries)+(sizeof(struct entry)*(en->num-1)));
+    sa = en;
+    //l = sizeof(struct entries)+(sizeof(struct entry)*(en->num-1));
+    l = SIZE_ENTRIES(en);
+    en = malloc(l);
+    memcpy(en,sa,l);
+    free(sa);
     return (en);
 }
 
@@ -384,8 +520,8 @@ unsigned long long m;
     	//n = head_to_index(head);
     	if (idx.i[head] == NULL) {
 		idx.i[head] = e;
-		//memory += sizeof(struct entries)+(sizeof(struct entry)*(e->num-1));
-		add_memory_counter(sizeof(struct entries)+(sizeof(struct entry)*(e->num-1)),e->num);
+		//add_memory_counter(sizeof(struct entries)+(sizeof(struct entry)*(e->num-1)),e->num);
+		add_memory_counter(SIZE_ENTRIES(e),e->num);
         	return (TRUE);
     	}
     }
@@ -617,48 +753,14 @@ struct cache_params *p;
     //printf("launched head: %i %05X\n",p->num_thread,p->head);
 }
 
-/*
-long long fill_cache (void) {
-int n = 0;
-//char head[MIN_STR];
-struct entries *e;
-long long count = 0L;
-
-    memory = 0;
-    printf("Caching hashes ...\n");
-    for (n=0;n<ENTRIES;n++) {
-        if (memory >= max_memory) {
-		printf("\nfill_cache: memory full\n");
-		break;
-	}
-        //sprintf(head,"%05X",n);
-	//printf("try head %s\n",head);
-	//printf("Memory: %lliM\n",memory/(1024L*1024L));
-	e = get_entries_disk(n);
-	if (e == NULL) {
-		panic("fill_cache get_entries_disk.");
-	}
-        if (!add_cache_entries (n,e)) {
-		panic("fill_cache add_cache_entries.");
-	}
-	count += e->num;
-	printf("Head: %05X Memory: %lliM Passwords: %lli\r",n,memory/(1024L*1024L),count);
-	fflush(stdout);
-	//printf("head %s in cache\n",head);
-    }
-    printf("\nDone.\n");
-    return(count);
-}
-*/
-
 long long fill_cache (void) {
 int n = 0,t;
 //char head[MIN_STR];
-struct entries *e;
+//struct entries *e;
 //long long count = 0L;
 unsigned long long m;
 
-    //memory = 0;
+    count = 0L;
     set_memory_counter(0L,0L);
     printf("Caching hashes ...\n");
     for (n=0;n<ENTRIES;n++) {
@@ -676,6 +778,124 @@ unsigned long long m;
     return(count);
 }
 
+int full_cache(void) {
+int n;
+
+    for (n=0;n<ENTRIES;n++) {
+	if (idx.i[n] == NULL) return (FALSE);
+
+    }
+    return (TRUE);
+}
+
+// ---------------------------------------
+/*
+int load_dat (long long *c) {
+struct entries *e;
+char *mem,*p;
+FILE *f;
+int n;
+int r=FALSE;
+long l,s;
+
+    if (lnodat) return (FALSE);
+    *c = 0L;
+    printf("Loading dat ...\n");
+    f = fopen(DAT,"r");
+    if (f != NULL) {
+	mem = malloc(MEM_INSERT);
+	e = (struct entries *) mem;
+	for (n=0;n<ENTRIES;n++) {
+		l = fread(mem,1,sizeof(struct entries),f);
+		if (l != sizeof(struct entries)) break;
+		s = SIZE_ENTRIES(e) - sizeof(struct entries);
+		p = mem+sizeof(struct entries);
+		l = fread(p,1,s,f);
+		if (l != s) break;
+		idx.i[n] = malloc(SIZE_ENTRIES(e));
+		memcpy(idx.i[n],mem,SIZE_ENTRIES(e));
+		*c += e->num;
+		printf ("Head: %05X loaded.\r",n);
+		fflush(stdout);
+	}
+	printf("\n");
+	if (n == ENTRIES) {
+		r=TRUE;
+		printf("done.\n");
+	}
+	else {
+		printf("dat corrupted.\n");
+	}
+	free(mem);
+	fclose(f);
+    }
+    return (r);
+}
+*/
+
+int load_dat (long long *c) {
+struct entries *e;
+char *mem,*p;
+FILE *f;
+int n;
+int r=FALSE;
+long l,s;
+
+    if (lnodat) return (FALSE);
+    *c = 0L;
+    printf("Loading dat ...\n");
+    f = fopen(DAT,"r");
+    if (f != NULL) {
+	fseek(f, 0L, SEEK_END);
+	l = ftell(f);
+	fseek(f, 0L, SEEK_SET);
+        mem = malloc(l);
+	if (mem != NULL) {
+		s = fread(mem,1,l,f);
+		fclose(f);
+		p = mem;
+		for (n=0;n<ENTRIES;n++) {
+			if ((p-mem) >= l) {
+				printf("\ndat corrupted.\n");
+				free(mem);
+				return (FALSE);
+			}
+			e = (struct entries *) p;
+			idx.i[n] = e;
+			*c += e->num;
+			printf ("Head: %05X loaded.\r",n);
+			fflush(stdout);
+			p += SIZE_ENTRIES(e);
+		}
+		r=TRUE;
+                printf("done.\n");
+	}
+	else {
+		printf("Not enougt memory.\n");
+	}
+    }
+    return (r);
+}
+
+void save_dat (void) {
+int n;
+FILE *f;
+
+    if (full_cache()) {
+	printf("Saving dat ...\n");
+	f = fopen(DAT,"w");
+	if (f != NULL) {
+		for (n=0;n<ENTRIES;n++) {
+			fwrite (idx.i[n],1,SIZE_ENTRIES(idx.i[n]),f);
+		}
+		printf ("Head: %05X saved.\r",n);
+		fclose(f);
+	}
+	printf("\ndone.\n");
+    }
+}
+
+// --------------------------------------
 
 int hash_to_index (char *hash) {
 int n;
@@ -707,7 +927,7 @@ int lcache;
 int lret = FALSE;
 int n_head;
 
-    //printf("pass: %s\n",pass);
+    //printf("checkpass: %s\n",pass);
     sha1(pass,hash);
     //sha1_to_string (hash,buffer);
     //printf("%s\n",buffer);
@@ -778,7 +998,7 @@ long long n,o;
     	fwrite ("\n",1,1,f);
     }
     else {
-	printf("%s p:%lli d:%lli\n",p,recovered,d_recovered);
+	printf("%s pr:%lli dr:%lli deep:%i\n",p,recovered,d_recovered,deep);
     }
     pthread_mutex_unlock (&mutex_append);
 }
@@ -789,22 +1009,17 @@ void close_append(FILE *f) {
 }
 
 void checkword (FILE *f,char *w,int deep,int predeep) {
-int i;
-char *a = ALPHA;
-char *m = ALPHA_MIN;
-char c[2];
+int i,l;
+//char *a = ALPHA;
+//char *m = ALPHA_MIN;
+char c[MIN_STR];
 char p[MAX_STR];
 char res[MAX_STR];
 
-    /*
-    if (deep_min && deep && (strlen(w)>=FORCE_DEEP)) {
-	a = ALPHA_MIN;
-    }
-    */
     //printf("a = '%s'\n",a);
-    c[1] = 0;
-    for (i=0;i<strlen(a);i++) {
-	c[0] =a[i];
+    l = strlen_utf8(alpha);
+    for (i=0;i<l;i++) {
+	get_char_utf8(i,alpha,c);
 	strcpy (p,w);
 	strcat (p,c);
 	if (checkpass(p)) {
@@ -813,9 +1028,9 @@ char res[MAX_STR];
 		write_append(f,p,predeep);
 		checkword(f,p,0,predeep);
 	}
-	else if (((deep < max_deep) && (!deep_min || (strchr(m,*c)!=NULL)))|| (strlen(p)<FORCE_DEEP)) {
+	else if (((deep < max_deep) && (strchr_utf8(alpha_d,c)!=NULL)) || (strlen_utf8(p)<FORCE_DEEP)) {
 		//printf("'%s' deep char: %s\n",w,c);
-		checkword(f,p,deep+1,predeep|(strlen(p)>=FORCE_DEEP));
+		checkword(f,p,deep+1,predeep|(strlen_utf8(p)>=FORCE_DEEP));
 	}
     }
 }
@@ -893,16 +1108,22 @@ void end_threads (void) {
 
 
 void checkword_mt (FILE *f,char *w) {
-int i;
-char a[] = ALPHA;
-char c[2];
+int i,l;
+//char *a = ALPHA;
+char c[MIN_STR];
 char p[MAX_STR];
 char res[MAX_STR];
 
+    set_alpha (alpha,p_alpha,ALPHA_ALL);
+    printf("alpha: '%s'\n",alpha);
+    set_alpha (alpha_top,p_alpha_top,alpha);
+    printf("alpha top: '%s'\n",alpha_top);
+    set_alpha (alpha_d,p_alpha_d,alpha);
+    printf("alpha deep: '%s'\n",alpha_d);
     nthreads = 0;
-    c[1] = 0;
-    for (i=0;i<strlen(a);i++) {
-        c[0] =a[i];
+    l = strlen_utf8(alpha_top);
+    for (i=0;i<l;i++) {
+	get_char_utf8 (i,alpha_top,c);
 	//printf("checkword_mt c='%s'\n",c);
         strcpy (p,w);
         strcat (p,c);
@@ -912,7 +1133,8 @@ char res[MAX_STR];
 		wait_threads();
                 launch_checkword(f,p,0,FALSE);
         }
-        else if (strlen(p)<FORCE_DEEP) {
+        //else if (get_length(p)<FORCE_DEEP) {
+	else if (((max_deep >0) && (strchr_utf8(alpha_d,c)!=NULL)) || (strlen_utf8(p)<FORCE_DEEP)) {
 		wait_threads();
                 launch_checkword(f,p,1,FALSE);
         }
@@ -921,19 +1143,97 @@ char res[MAX_STR];
     printf("\nexit.\n");
 }
 
+#define MAX_BUFFER (1024L*1024L*1024L)
+
+void stats (void) {
+long n;
+long long sum[sizeof(ALPHA_SYM_T)+sizeof(ALPHA_SYM)],o;
+char *p;
+FILE *f;
+long l,c,s,u,d;
+char a[MAX_STR];
+char k;
+
+    strcpy(a,ALPHA_SYM_T);
+    strcat(a,ALPHA_SYM);
+    p = malloc(MAX_BUFFER);
+    s = strlen(a);
+    for (n=0;n<s;n++) {
+	sum[n] = 0;
+	printf("%02X '%c'\n",(unsigned char)a[n],a[n]);
+    }
+    f = fopen(LOG, "r");
+    if (f != NULL) {
+	while ((l=fread(p,sizeof(char),MAX_BUFFER,f)) > 0) {
+		printf("l=%li\n",l);
+		for (n=0;n<l;n++) {
+			for (c=0;c<s;c++) {
+				if (p[n] == a[c]) {
+					sum[c]++;
+					break;
+				}
+			}
+		}
+	}
+	fclose(f);
+	d = s-1;
+	u = d-1;
+	while (u>0) {
+		//printf("s=%li u=%li d=%li su=%lli sd=%lli\n",s,u,d,sum[u],sum[d]);
+		if (sum[d] > sum[u]) {
+			o = sum[u];
+			sum[u] = sum[d];
+			sum[d] = o;
+			k = a[u];
+			a[u] = a[d];
+			a[d] = k;
+			if (d < (s-1)) {
+				u++;
+				d++;
+			}
+		}
+		else {
+			u--;
+			d--;
+		}
+	}
+	for (c=0;c<s;c++) {
+		printf("%02X '%c': %lli\n",(unsigned char)a[c],a[c],sum[c]);
+	}
+    }
+    else {
+	printf("%s\n",LOG);
+	panic("stats");
+    }
+    free (p);
+}
+
 // --------------------------------------------
 #define HELP "\
 --------------------------------------------------------------\n\
 Guessc ("MY_VERSION") programed by Alex Bassas.\n\
 --------------------------------------------------------------\n\
-usage: guessc [-c<num>][-n][-d<num>][-m][-t<num>] \"<root>\"\n\
+usage: guessc [-c<num>][-n][-d<num>][-t<num>] \"<root>\"\n\
 \n\
 \"<root>\"      => Root string to search, \"\" for all passwords\n\
 -c<num>       => Cache size in Gb (default 8)\n\
 -n            => Don't save the password to '"LOG"', print it\n\
 -d<num>       => Max deep (default 0)\n\
--m            => Use min alphabet on deep>0\n\
 -t<num>       => Num of threads (default 4)\n\
+-a<pattern>   => Pattern for alphabet (default all)\n\
+-m<pattern>   => Pattern for deep alphabet (default same as -a)\n\
+-i<pattern>   => Pattern for top alphabet (default sames as -a)\n\
+-l            => Don't load DAT\n\
+-s            => Examine '"LOG"'\n\
+\n\
+<pattern>     o = lower occidental\n\
+              c = lower cyrillic\n\
+              O = upper occidental\n\
+              C = upper cyrillic\n\
+              n = numbers\n\
+              S = top 10 symbols\n\
+              s = other symbols\n\
+              j = japanese\n\
 \n"
 
 int main(int argc, char **argv) {
@@ -943,7 +1243,7 @@ long long c;
 int p,i;
 char root[MAX_STR];
 
-    while ((p = getopt(argc, argv, "nd:c:mt:")) != -1) {
+    while ((p = getopt(argc, argv, "nd:c:t:a:m:i:sl")) != -1) {
 	switch (p) {
 		case 'c':
 			max_memory = atoi(optarg)*1024L*1024*1024L;
@@ -955,16 +1255,33 @@ char root[MAX_STR];
 			max_deep = atoi(optarg);
 			break;
 		case 'm':
-			deep_min = TRUE;
+			strcpy(p_alpha_d,optarg);
 			break;
+
 		case 't':
 			max_threads = atoi(optarg);
+			break;
+		case 'i':
+			strcpy(p_alpha_top,optarg);
+			break;
+		case 'a':
+                        strcpy(p_alpha,optarg);
+                        break;
+		case 's':
+			lstats = TRUE;
+			break;
+		case 'l':
+			lnodat = TRUE;
 			break;
 		case '?':
 		default:
 			printf(HELP);
 			exit(0);
 	}
+    }
+    if (lstats) {
+        stats();
+        return(0);
     }
     root[0] = 0;
     if (optind == argc) {
@@ -975,10 +1292,11 @@ char root[MAX_STR];
 	strcpy (root,argv[i]);
     }
     init_cache();
-#ifdef PRECACHE
-    c = fill_cache();
+    if (!load_dat(&c)) {
+    	c = fill_cache();
+	save_dat();
+    }
     printf("passwords in cache: %lli\n",c);
-#endif
     f = open_append();
     checkword_mt(f,root);
     close_append(f);
